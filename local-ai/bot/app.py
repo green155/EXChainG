@@ -111,10 +111,10 @@ class Bot:
         await self.telegram.delete_webhook()
         await self.telegram.set_my_commands(COMMANDS)
 
-        if not self.config.allowed_user_ids:
+        if not self.config.has_allowlist:
             log.warning(
-                "TELEGRAM_ALLOWED_USER_IDS is empty -- the bot will refuse everyone "
-                "and reply with their user ID so you can add it to .env"
+                "no allowlist configured -- the bot will refuse everyone and reply "
+                "with their user ID so you can add it to .env"
             )
         try:
             version = await self.ollama.version()
@@ -150,7 +150,7 @@ class Bot:
         sender = message.get("from") or {}
         user_id = int(sender.get("id", 0))
 
-        if not self.config.is_allowed(user_id):
+        if not self.config.is_allowed(user_id, sender.get("username")):
             await self._refuse(chat_id, user_id, sender)
             return
 
@@ -183,7 +183,8 @@ class Bot:
             chat_id,
             "This bot is private.\n\n"
             f"Your Telegram user ID is {user_id}. If this is your bot, add it to "
-            "TELEGRAM_ALLOWED_USER_IDS in local-ai/.env and restart the service.",
+            "TELEGRAM_ALLOWED_USER_IDS in local-ai/.env and run "
+            "`local-ai/lai restart`.",
         )
 
     # -- commands ----------------------------------------------------------

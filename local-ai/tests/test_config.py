@@ -94,3 +94,66 @@ def test_allowlist_admits_only_listed_ids():
     config = Config(telegram_token="1:abc", allowed_user_ids={42})
     assert config.is_allowed(42)
     assert not config.is_allowed(43)
+
+
+# -- username allowlist ------------------------------------------------------
+
+
+def test_usernames_are_normalised():
+    from bot.config import parse_usernames
+
+    assert parse_usernames("@Mac_Owner, other_name") == {"mac_owner", "other_name"}
+
+
+def test_empty_username_list_is_empty():
+    from bot.config import parse_usernames
+
+    assert parse_usernames("") == set()
+
+
+@pytest.mark.parametrize("bad", ["ab", "has spaces!", "with-dash", "x" * 33])
+def test_invalid_usernames_are_rejected(bad):
+    from bot.config import parse_usernames
+
+    with pytest.raises(ConfigError):
+        parse_usernames(bad)
+
+
+def test_a_username_grants_access_case_insensitively():
+    config = Config(telegram_token="1:abc", allowed_usernames={"mac_owner"})
+    assert config.is_allowed(999, "Mac_Owner")
+    assert config.is_allowed(999, "@mac_owner")
+
+
+def test_a_username_alone_is_not_enough_for_a_different_name():
+    config = Config(telegram_token="1:abc", allowed_usernames={"mac_owner"})
+    assert not config.is_allowed(999, "someone_else")
+
+
+def test_a_numeric_id_works_without_a_username():
+    config = Config(telegram_token="1:abc", allowed_user_ids={7})
+    assert config.is_allowed(7, None)
+
+
+def test_a_user_with_no_username_is_not_admitted_by_the_name_list():
+    config = Config(telegram_token="1:abc", allowed_usernames={"mac_owner"})
+    assert not config.is_allowed(999, None)
+
+
+def test_has_allowlist_reflects_either_list():
+    assert not Config(telegram_token="1:abc").has_allowlist
+    assert Config(telegram_token="1:abc", allowed_user_ids={1}).has_allowlist
+    assert Config(telegram_token="1:abc", allowed_usernames={"a_name"}).has_allowlist
+
+
+def test_usernames_load_from_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1:abc")
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERNAMES", "@Mac_Owner")
+    assert load_config(env_file=tmp_path / "absent").allowed_usernames == {"mac_owner"}
+
+
+def test_a_username_in_the_id_list_is_explained(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1:abc")
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "@mac_owner")
+    with pytest.raises(ConfigError, match="TELEGRAM_ALLOWED_USERNAMES"):
+        load_config(env_file=tmp_path / "absent")

@@ -182,17 +182,23 @@ else
 fi
 
 current_ids="$(grep '^TELEGRAM_ALLOWED_USER_IDS=' "$env_file" | cut -d= -f2- || true)"
-if [[ -z "$current_ids" ]]; then
+current_names="$(grep '^TELEGRAM_ALLOWED_USERNAMES=' "$env_file" | cut -d= -f2- || true)"
+if [[ -z "$current_ids" && -z "$current_names" ]]; then
   echo
-  info "Only user IDs on this list can talk to the bot. Message @userinfobot"
-  info "on Telegram to find yours, or leave this blank and send the bot /whoami"
-  info "once it is running — it will tell you your ID and refuse you politely."
-  read -r -p "    Your Telegram user ID (blank to do it later): " ids
-  if [[ -n "$ids" ]]; then
-    set_env TELEGRAM_ALLOWED_USER_IDS "$ids"
-    info "allowlist saved"
+  info "Only people on the allowlist get answers. Give either your numeric"
+  info "Telegram user ID (ask @userinfobot) or your @username."
+  read -r -p "    Your Telegram ID or @username (blank to do it later): " who
+  if [[ -z "${who// /}" ]]; then
+    warn "allowlist left empty — the bot refuses everyone, but it replies with"
+    warn "the sender's user ID, so message it once and add what it tells you."
+  elif [[ "$who" =~ ^[0-9,\ ]+$ ]]; then
+    set_env TELEGRAM_ALLOWED_USER_IDS "$who"
+    info "allowlist saved (user ID)"
   else
-    warn "allowlist left empty — the bot will refuse everyone until you fill it in"
+    set_env TELEGRAM_ALLOWED_USERNAMES "${who#@}"
+    info "allowlist saved (username)"
+    warn "a username can be released and reclaimed by someone else. Send the"
+    warn "bot /whoami and move your numeric ID into TELEGRAM_ALLOWED_USER_IDS."
   fi
 else
   info "allowlist already set"

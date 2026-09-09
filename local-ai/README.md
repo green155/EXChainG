@@ -121,7 +121,8 @@ list. The ones worth knowing:
 | Variable | |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | from @BotFather |
-| `TELEGRAM_ALLOWED_USER_IDS` | comma-separated numeric IDs; **empty locks everyone out** |
+| `TELEGRAM_ALLOWED_USER_IDS` | comma-separated numeric IDs — the real lock |
+| `TELEGRAM_ALLOWED_USERNAMES` | comma-separated @usernames; weaker, see below |
 | `LOCAL_AI_MODEL` | default model |
 | `LOCAL_AI_VISION_MODEL` | used when you send a photo and the default can't see |
 | `LOCAL_AI_SYSTEM_PROMPT` | prepended to every conversation |
@@ -135,9 +136,15 @@ Restart after editing: `local-ai/lai restart`.
 The bot is only as private as its token: anyone holding it can message your
 bot, and the allowlist is what stops them getting a reply.
 
-- **The allowlist is the real lock.** Only user IDs in
-  `TELEGRAM_ALLOWED_USER_IDS` get answers. Everyone else is told their own ID
-  and nothing else. An empty list refuses everybody, deliberately.
+- **The allowlist is the real lock.** Only people in
+  `TELEGRAM_ALLOWED_USER_IDS` (or `TELEGRAM_ALLOWED_USERNAMES`) get answers.
+  Everyone else is told their own ID and nothing else. Both lists empty refuses
+  everybody, deliberately.
+- **Prefer numeric IDs to usernames.** A numeric ID is permanently one person.
+  A username is a handle they hold for now — release it, and whoever registers
+  it next inherits the access. Usernames are there so you can set the bot up
+  before your first message; swap in your ID once `/whoami` tells you what it
+  is.
 - **Ollama binds to loopback**, so the model server is not reachable from your
   network.
 - **`.env` is git-ignored and chmod 600.** It is the one file worth guarding.
@@ -151,9 +158,11 @@ bot, and the allowlist is what stops them getting a reply.
 **The bot says nothing at all.** `local-ai/lai logs`. A bad token shows up as
 a 401 within a second of starting.
 
-**"This bot is private."** Your user ID isn't on the allowlist. The message
-tells you the ID — put it in `TELEGRAM_ALLOWED_USER_IDS` and
-`local-ai/lai restart`.
+**"This bot is private."** You aren't on the allowlist. The message tells you
+your numeric ID — put it in `TELEGRAM_ALLOWED_USER_IDS` and
+`local-ai/lai restart`. If you configured a username instead and still get
+this, check it matches the one on your Telegram profile — the allowlist reads
+`@username`, not your display name.
 
 **"model ... is not installed."** `local-ai/lai pull <name>`.
 
@@ -173,7 +182,7 @@ mlx-whisper.
 ```bash
 cd local-ai
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest        # 134 tests, no network, no GPU
+.venv/bin/python -m pytest        # 149 tests, no network, no GPU
 .venv/bin/python -m bot           # run against a real Ollama
 ```
 

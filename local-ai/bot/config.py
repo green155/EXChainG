@@ -8,6 +8,7 @@ this repository -- ``.env`` is git-ignored and read at start-up only.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -92,9 +93,31 @@ def parse_user_ids(raw: str) -> set[int]:
             ids.add(int(chunk))
         except ValueError as exc:
             raise ConfigError(
-                f"TELEGRAM_ALLOWED_USER_IDS must contain numeric Telegram user IDs, got {chunk!r}"
+                "TELEGRAM_ALLOWED_USER_IDS must contain numeric Telegram user IDs, "
+                f"got {chunk!r}. If that is a @username, put it in "
+                "TELEGRAM_ALLOWED_USERNAMES instead."
             ) from exc
     return ids
+
+
+def parse_usernames(raw: str) -> set[str]:
+    """Parse a comma/space separated allowlist of Telegram @usernames.
+
+    Normalised to lowercase without the leading ``@``, because Telegram treats
+    usernames case-insensitively.
+    """
+    names: set[str] = set()
+    for chunk in raw.replace(",", " ").split():
+        name = chunk.strip().lstrip("@").lower()
+        if not name:
+            continue
+        if not re.fullmatch(r"[a-z0-9_]{4,32}", name):
+            raise ConfigError(
+                f"{chunk!r} is not a valid Telegram username (letters, digits "
+                "and underscores, 5-32 characters)."
+            )
+        names.add(name)
+    return names
 
 
 def default_data_dir() -> Path:
@@ -108,6 +131,7 @@ def default_data_dir() -> Path:
 class Config:
     telegram_token: str
     allowed_user_ids: set[int] = field(default_factory=set)
+    allowed_usernames: set[str] = field(default_factory=set)
     ollama_host: str = "http://127.0.0.1:11434"
     default_model: str = "qwen3:8b"
     vision_model: str = ""
@@ -130,8 +154,21 @@ class Config:
     def db_path(self) -> Path:
         return self.data_dir / "bot.db"
 
-    def is_allowed(self, user_id: int) -> bool:
-        return user_id in self.allowed_user_ids
+    @property
+    def has_allowlist(self) -> bool:
+        return bool(self.allowed_user_ids or self.allowed_usernames)
+
+    def is_allowed(self, user_id: int, username: str | None = None) -> bool:
+        """Numeric IDs are the real lock; usernames are a convenience.
+
+        A username can be released and claimed by someone else, so a numeric ID
+        is the only identifier that stays pinned to one person.
+        """
+        if user_id in self.allowed_user_ids:
+            return True
+        if username and username.lstrip("@").lower() in self.allowed_usernames:
+            return True
+        return False
 
 
 def load_config(env_file: Path | None = DEFAULT_ENV_FILE) -> Config:
@@ -150,6 +187,7 @@ def load_config(env_file: Path | None = DEFAULT_ENV_FILE) -> Config:
     config = Config(
         telegram_token=token,
         allowed_user_ids=parse_user_ids(os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "")),
+        allowed_usernames=parse_usernames(os.environ.get("TELEGRAM_ALLOWED_USERNAMES", "")),
         ollama_host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").strip().rstrip("/"),
         default_model=os.environ.get("LOCAL_AI_MODEL", "qwen3:8b").strip(),
         vision_model=os.environ.get("LOCAL_AI_VISION_MODEL", "").strip(),

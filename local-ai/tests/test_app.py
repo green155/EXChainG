@@ -287,3 +287,34 @@ async def test_no_swap_when_the_model_already_sees(bot):
 async def test_text_only_never_touches_the_vision_model(bot):
     bot.config.vision_model = "gemma3:4b"
     assert await bot._pick_model(7, has_images=False) == ("qwen3:8b", None)
+
+
+async def test_a_username_on_the_allowlist_is_admitted(tmp_path):
+    config = Config(
+        telegram_token="1:abc",
+        allowed_usernames={"mac_owner"},
+        data_dir=tmp_path,
+    )
+    bot = Bot(config)
+    bot.telegram = FakeTelegram()  # type: ignore[assignment]
+    payload = message("/whoami", user_id=555)
+    payload["from"]["username"] = "Mac_Owner"
+    await bot._handle(payload)
+    assert "555" in bot.telegram.text
+    assert "private" not in bot.telegram.text.lower()
+    bot.store.close()
+
+
+async def test_a_different_username_is_still_refused(tmp_path):
+    config = Config(
+        telegram_token="1:abc",
+        allowed_usernames={"mac_owner"},
+        data_dir=tmp_path,
+    )
+    bot = Bot(config)
+    bot.telegram = FakeTelegram()  # type: ignore[assignment]
+    payload = message("hello", user_id=555)
+    payload["from"]["username"] = "someone_else"
+    await bot._handle(payload)
+    assert "private" in bot.telegram.text.lower()
+    bot.store.close()

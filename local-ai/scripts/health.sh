@@ -29,9 +29,12 @@ if [[ -f "$root/.env" ]]; then
   ok ".env present"
   grep -q '^TELEGRAM_BOT_TOKEN=REPLACE_ME' "$root/.env" && bad "TELEGRAM_BOT_TOKEN is still the placeholder"
   if grep -qE '^TELEGRAM_ALLOWED_USER_IDS=[0-9]' "$root/.env"; then
-    ok "allowlist configured"
+    ok "allowlist configured (user ID)"
+  elif grep -qE '^TELEGRAM_ALLOWED_USERNAMES=@?[A-Za-z0-9_]{4,}' "$root/.env"; then
+    ok "allowlist configured (username)"
+    warn "a username can be reassigned; add your numeric ID when you know it"
   else
-    bad "TELEGRAM_ALLOWED_USER_IDS is empty -- the bot will refuse everyone"
+    bad "no allowlist -- the bot will refuse everyone"
   fi
   perms="$(stat -f '%Lp' "$root/.env" 2>/dev/null || stat -c '%a' "$root/.env" 2>/dev/null)"
   [[ "$perms" == "600" ]] && ok ".env is chmod 600" || warn ".env is chmod $perms (want 600)"
