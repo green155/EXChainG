@@ -29,6 +29,20 @@ You need a bot token first: message **@BotFather** on Telegram, send `/newbot`,
 follow the prompts, copy the token it gives you. The installer prompts for it
 without echoing.
 
+### Unattended
+
+To run it start to finish without a single question:
+
+```bash
+./local-ai/install.sh --yes \
+  --token 1234:AA-your-botfather-token \
+  --allow @your_telegram_username
+```
+
+`--allow` takes either your numeric user ID or your `@username`. Note that a
+token passed as a flag lands in your shell history — omit `--token` to be
+prompted for it instead, or rotate it afterwards with `local-ai/lai token`.
+
 ### What lands where
 
 | Path | What |

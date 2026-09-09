@@ -2,9 +2,15 @@
 # Set up a private, offline AI on an Apple Silicon Mac, reachable from Telegram.
 #
 #   ./local-ai/install.sh                 interactive, does everything
-#   ./local-ai/install.sh --yes           accept every default
+#   ./local-ai/install.sh --yes           accept every default, no questions
+#   ./local-ai/install.sh --token X --allow Y --yes     fully unattended
 #   ./local-ai/install.sh --skip-models   set up the software, pull models later
 #   ./local-ai/install.sh --models "qwen3:8b gemma3:4b"
+#
+# --token takes a @BotFather token, --allow takes your numeric Telegram user
+# ID or your @username. Both are only read when .env does not already have
+# them, so re-running is safe. A token passed as a flag lands in your shell
+# history -- omit it to be prompted instead, or rotate later with `lai token`.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,6 +18,8 @@ assume_yes=0
 skip_models=0
 skip_service=0
 model_override=""
+token_arg=""
+allow_arg=""
 
 while (( $# )); do
   case "$1" in
@@ -19,7 +27,10 @@ while (( $# )); do
     --skip-models)  skip_models=1 ;;
     --skip-service) skip_service=1 ;;
     --models)       model_override="${2:-}"; shift ;;
-    -h|--help)      sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --token)        token_arg="${2:-}"; shift ;;
+    --allow)        allow_arg="${2:-}"; shift ;;
+    # Print the header comment, however long it happens to be.
+    -h|--help)      awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -155,20 +166,36 @@ else
 fi
 
 set_env() {
-  local key="$1" value="$2"
-  # Escape the replacement so tokens with slashes or & survive sed.
-  local escaped="${value//\\/\\\\}"
-  escaped="${escaped//&/\\&}"
-  escaped="${escaped//|/\\|}"
-  if grep -q "^${key}=" "$env_file"; then
-    sed -i '' "s|^${key}=.*|${key}=${escaped}|" "$env_file"
-  else
+  # Rewrite KEY=value in place. Deliberately not sed: a bot token is arbitrary
+  # text, and every sed metacharacter in it would need escaping (and BSD and
+  # GNU sed disagree about -i anyway).
+  local key="$1" value="$2" tmp line
+  if ! grep -q "^${key}=" "$env_file"; then
     printf '%s=%s\n' "$key" "$value" >> "$env_file"
+    return
   fi
+  tmp="$(mktemp)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "${key}="* ]]; then
+      printf '%s=%s\n' "$key" "$value"
+    else
+      printf '%s\n' "$line"
+    fi
+  done < "$env_file" > "$tmp"
+  # Truncate rather than move, so the file keeps its 600 permissions.
+  cat "$tmp" > "$env_file"
+  rm -f "$tmp"
 }
 
 current_token="$(grep '^TELEGRAM_BOT_TOKEN=' "$env_file" | cut -d= -f2- || true)"
-if [[ -z "$current_token" || "$current_token" == "REPLACE_ME" ]]; then
+if [[ -n "$current_token" && "$current_token" != "REPLACE_ME" ]]; then
+  info "token already set"
+elif [[ -n "$token_arg" ]]; then
+  set_env TELEGRAM_BOT_TOKEN "$token_arg"
+  info "token saved to .env (from --token)"
+elif [[ ! -t 0 ]]; then
+  die "no token. Re-run with --token <token from @BotFather>, or run this script interactively."
+else
   echo
   info "Open Telegram, message @BotFather, send /newbot, and copy the token."
   info "It is typed in, not echoed — nothing is written to your shell history."
@@ -177,13 +204,34 @@ if [[ -z "$current_token" || "$current_token" == "REPLACE_ME" ]]; then
   [[ -n "$token" ]] || die "no token given; edit $env_file by hand and re-run"
   set_env TELEGRAM_BOT_TOKEN "$token"
   info "token saved to .env"
-else
-  info "token already set"
 fi
 
 current_ids="$(grep '^TELEGRAM_ALLOWED_USER_IDS=' "$env_file" | cut -d= -f2- || true)"
 current_names="$(grep '^TELEGRAM_ALLOWED_USERNAMES=' "$env_file" | cut -d= -f2- || true)"
-if [[ -z "$current_ids" && -z "$current_names" ]]; then
+
+# Store whichever identifier we were given: digits are a user ID, anything
+# else is a @username.
+save_allow() {
+  local who="${1#@}"
+  if [[ "$who" =~ ^[0-9,\ ]+$ ]]; then
+    set_env TELEGRAM_ALLOWED_USER_IDS "$who"
+    info "allowlist saved (user ID)"
+  else
+    set_env TELEGRAM_ALLOWED_USERNAMES "$who"
+    info "allowlist saved (username)"
+    warn "a username can be released and reclaimed by someone else. Send the"
+    warn "bot /whoami and move your numeric ID into TELEGRAM_ALLOWED_USER_IDS."
+  fi
+}
+
+if [[ -n "$current_ids" || -n "$current_names" ]]; then
+  info "allowlist already set"
+elif [[ -n "$allow_arg" ]]; then
+  save_allow "$allow_arg"
+elif [[ ! -t 0 ]]; then
+  warn "no allowlist. Re-run with --allow <your ID or @username>, or message"
+  warn "the bot once — it replies with the user ID you need to add."
+else
   echo
   info "Only people on the allowlist get answers. Give either your numeric"
   info "Telegram user ID (ask @userinfobot) or your @username."
@@ -191,17 +239,9 @@ if [[ -z "$current_ids" && -z "$current_names" ]]; then
   if [[ -z "${who// /}" ]]; then
     warn "allowlist left empty — the bot refuses everyone, but it replies with"
     warn "the sender's user ID, so message it once and add what it tells you."
-  elif [[ "$who" =~ ^[0-9,\ ]+$ ]]; then
-    set_env TELEGRAM_ALLOWED_USER_IDS "$who"
-    info "allowlist saved (user ID)"
   else
-    set_env TELEGRAM_ALLOWED_USERNAMES "${who#@}"
-    info "allowlist saved (username)"
-    warn "a username can be released and reclaimed by someone else. Send the"
-    warn "bot /whoami and move your numeric ID into TELEGRAM_ALLOWED_USER_IDS."
+    save_allow "$who"
   fi
-else
-  info "allowlist already set"
 fi
 
 set_env LOCAL_AI_MODEL "$CHAT_MODEL"
