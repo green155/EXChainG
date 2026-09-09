@@ -39,3 +39,11 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# local-ai (Mac mini stack)
+local-ai/.env
+local-ai/.venv/
+local-ai/.venv-test/
+local-ai/**/__pycache__/
+local-ai/.pytest_cache/
+*.db

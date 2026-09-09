@@ -143,3 +143,13 @@ to your own before submitting.
 - Offline cache of the last known rates, so the list is populated on launch
   before the first request returns.
 - Drag to reorder the watchlist (`move()` already exists in the store).
+
+## Also in this repository
+
+[`local-ai/`](local-ai/README.md) — an unrelated side project that lives here
+for convenience: a private AI assistant that runs on an Apple Silicon Mac and
+answers over Telegram. Nothing in the app depends on it.
+
+```bash
+./local-ai/install.sh
+```

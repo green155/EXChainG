@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# lai -- one command for the local AI stack.
+set -uo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+log_dir="$HOME/Library/Logs/local-ai"
+labels=(com.local-ai.ollama com.local-ai.telegram-bot)
+
+usage() {
+  cat <<'USAGE'
+lai — control the local AI stack
+
+  lai install          run the full installer (safe to re-run)
+  lai start [what]     start ollama, bot, or all (default: all)
+  lai stop [what]      stop them
+  lai restart [what]   stop then start — do this after editing .env
+  lai status           what is loaded and answering
+  lai health           full diagnostic
+  lai logs [what]      follow the logs (default: bot)
+  lai run              run the bot in this terminal, verbosely
+  lai models           list installed models
+  lai pull [names...]  download models (default: the ones that fit this Mac)
+  lai chat [model]     talk to the model in the terminal, no Telegram
+  lai token            replace the Telegram bot token
+  lai service          install the launchd agents
+  lai uninstall        remove the launchd agents
+
+'what' is one of: ollama, bot, all
+USAGE
+}
+
+resolve() {
+  case "${1:-all}" in
+    ollama)     echo com.local-ai.ollama ;;
+    bot|tg)     echo com.local-ai.telegram-bot ;;
+    all|"")     echo "${labels[@]}" ;;
+    *) echo "unknown target: $1" >&2; exit 2 ;;
+  esac
+}
+
+require_macos() {
+  [[ "$(uname -s)" == "Darwin" ]] || { echo "'$1' needs macOS launchd." >&2; exit 1; }
+}
+
+cmd_start() {
+  require_macos start
+  for label in $(resolve "${1:-all}"); do
+    if launchctl print "gui/$UID/$label" >/dev/null 2>&1; then
+      launchctl kickstart "gui/$UID/$label" >/dev/null 2>&1 && echo "started $label"
+    else
+      echo "$label is not installed — run: lai service" >&2
+    fi
+  done
+}
+
+cmd_stop() {
+  require_macos stop
+  for label in $(resolve "${1:-all}"); do
+    launchctl kill SIGTERM "gui/$UID/$label" >/dev/null 2>&1 \
+      && echo "stopped $label" \
+      || echo "$label was not running"
+  done
+}
+
+cmd_status() {
+  local host="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+  [[ "$host" == http* ]] || host="http://$host"
+
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    for label in "${labels[@]}"; do
+      if state="$(launchctl print "gui/$UID/$label" 2>/dev/null)"; then
+        pid="$(grep -m1 -o 'pid = [0-9]*' <<<"$state" | awk '{print $3}')"
+        printf '%-28s %s\n' "$label" "${pid:+running (pid $pid)}${pid:-loaded, not running}"
+      else
+        printf '%-28s %s\n' "$label" "not installed"
+      fi
+    done
+    echo
+  fi
+
+  if version="$(curl -fsS --max-time 5 "$host/api/version" 2>/dev/null)"; then
+    echo "ollama:  $version at $host"
+  else
+    echo "ollama:  not answering at $host"
+  fi
+
+  if [[ -f "$root/.env" ]]; then
+    local model
+    model="$(grep '^LOCAL_AI_MODEL=' "$root/.env" | cut -d= -f2-)"
+    echo "model:   ${model:-unset}"
+  fi
+  if command -v ollama >/dev/null 2>&1; then
+    echo
+    echo "loaded in memory:"
+    ollama ps 2>/dev/null || true
+  fi
+}
+
+cmd_logs() {
+  local file="$log_dir/telegram-bot.log"
+  [[ "${1:-bot}" == "ollama" ]] && file="$log_dir/ollama.log"
+  if [[ ! -f "$file" ]]; then
+    echo "no log at $file yet" >&2
+    exit 1
+  fi
+  echo "following $file (ctrl-c to stop)"
+  tail -n 50 -f "$file"
+}
+
+cmd_run() {
+  [[ -x "$root/.venv/bin/python3" ]] || { echo "no venv — run: lai install" >&2; exit 1; }
+  echo "running in the foreground; ctrl-c to stop"
+  LOCAL_AI_LOG_LEVEL="${LOCAL_AI_LOG_LEVEL:-DEBUG}" \
+    "$root/.venv/bin/python3" -m bot
+}
+
+cmd_chat() {
+  command -v ollama >/dev/null 2>&1 || { echo "ollama is not installed" >&2; exit 1; }
+  local model="${1:-}"
+  if [[ -z "$model" && -f "$root/.env" ]]; then
+    model="$(grep '^LOCAL_AI_MODEL=' "$root/.env" | cut -d= -f2-)"
+  fi
+  exec ollama run "${model:-qwen3:8b}"
+}
+
+cmd_token() {
+  local env_file="$root/.env"
+  [[ -f "$env_file" ]] || { echo "no .env — run: lai install" >&2; exit 1; }
+  echo "Get a fresh token from @BotFather (/token, or /revoke then /token)."
+  read -r -s -p "New bot token: " token
+  echo
+  [[ -n "$token" ]] || { echo "nothing entered, leaving .env alone" >&2; exit 1; }
+  local escaped="${token//|/\\|}"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    sed -i '' "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=${escaped}|" "$env_file"
+  else
+    sed -i "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=${escaped}|" "$env_file"
+  fi
+  chmod 600 "$env_file"
+  echo "token updated"
+  [[ "$(uname -s)" == "Darwin" ]] && cmd_stop bot && cmd_start bot
+}
+
+case "${1:-}" in
+  install)          shift; exec "$root/install.sh" "$@" ;;
+  start)            shift; cmd_start "${1:-all}" ;;
+  stop)             shift; cmd_stop "${1:-all}" ;;
+  restart)          shift; cmd_stop "${1:-all}"; sleep 1; cmd_start "${1:-all}" ;;
+  status)           cmd_status ;;
+  health)           exec "$root/scripts/health.sh" ;;
+  logs)             shift; cmd_logs "${1:-bot}" ;;
+  run)              cmd_run ;;
+  models)           exec ollama list ;;
+  pull)             shift; exec "$root/scripts/pull-models.sh" "$@" ;;
+  chat)             shift; cmd_chat "${1:-}" ;;
+  token)            cmd_token ;;
+  service)          shift; exec "$root/scripts/install-service.sh" "$@" ;;
+  uninstall)        exec "$root/scripts/uninstall-service.sh" ;;
+  ""|-h|--help)     usage ;;
+  *) echo "unknown command: $1" >&2; echo; usage; exit 2 ;;
+esac
